@@ -17,24 +17,26 @@ def build_digest(posts: list[dict], max_posts: int = 10) -> str:
             seen_urls.add(url)
             unique.append(p)
 
-    # Sort: trending first, then by likes descending
-    unique.sort(key=lambda p: (not p.get("is_trending"), -p.get("likes", 0)))
+    # Sort by engagement (likes descending)
+    unique.sort(key=lambda p: -p.get("likes", 0))
 
     top = unique[:max_posts]
     today = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
 
     html = f"""
     <h1 style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#1d9bf0;">
-        X Daily Digest &mdash; {today}
+        X AI Dev Digest &mdash; {today}
     </h1>
     <p style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#536471;">
-        {len(top)} trending &amp; popular posts from X
+        {len(top)} top posts about AI coding &amp; dev tools from X
     </p>
     <hr style="border:1px solid #eff3f4;">
     """
 
     for i, post in enumerate(top, 1):
-        tag = "🔥 Trending" if post.get("is_trending") else "⭐ Popular"
+        kw = post.get("keyword", "")
+        s = "Top" if post.get("sort") == "top" else "New"
+        tag = f"🏷 {kw} · {s}"
         html += f"""
         <div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;
                     margin-bottom:20px;padding:16px;border:1px solid #eff3f4;

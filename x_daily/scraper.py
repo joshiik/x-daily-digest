@@ -3,22 +3,34 @@
 import os
 import random
 import time
-import json
-from datetime import datetime
 from urllib.parse import quote
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
+# AI coding / dev tools keywords to search daily
+AI_KEYWORDS = [
+    "AI coding assistant",
+    "AI developer tools",
+    "Claude Code",
+    "GitHub Copilot",
+    "Cursor IDE",
+    "AI agent development",
+    "LLM prompt engineering",
+    "AI code generation",
+    "Vibe coding",
+    "AI programming",
+]
+
 
 class XScraper:
-    """Scrapes trending topics and posts from X using a headless browser."""
+    """Scrapes X for AI coding / dev tool posts via keyword search."""
 
     def __init__(self, auth_state_path=None):
         self.auth_state_path = auth_state_path
         self.posts = []
 
     def scrape(self) -> list[dict]:
-        """Run the full scrape: trending topics + their top posts + For You feed."""
+        """Search AI keywords on X, grab top + latest posts from each."""
         proxy = os.environ.get("X_PROXY") or os.environ.get("HTTPS_PROXY") or ""
 
         with sync_playwright() as p:
@@ -59,22 +71,19 @@ class XScraper:
             )
 
             try:
-                # ── Trending topics ──
-                trending_topics = self._scrape_trending(page)
-                print(f"[scraper] Found {len(trending_topics)} trending topics")
+                for kw in AI_KEYWORDS:
+                    # Search "top" (popular posts)
+                    top_posts = self._search(page, kw, sort="top")
+                    self.posts.extend(top_posts)
 
-                # Scrape top posts for each trending topic (limit to avoid rate-limit)
-                for topic in trending_topics[:8]:
-                    posts = self._scrape_topic_posts(page, topic)
-                    self.posts.extend(posts)
-                    delay = random.uniform(2.0, 4.0)
-                    print(f"[scraper] Topic '{topic[:40]}': {len(posts)} posts, sleeping {delay:.1f}s")
+                    # Search "latest" (fresh posts)
+                    latest_posts = self._search(page, kw, sort="latest")
+                    self.posts.extend(latest_posts)
+
+                    delay = random.uniform(1.5, 3.0)
+                    total = len(top_posts) + len(latest_posts)
+                    print(f"[scraper] '{kw}': {total} posts, sleeping {delay:.1f}s")
                     time.sleep(delay)
-
-                # ── For You feed ──
-                fyp_posts = self._scrape_for_you(page)
-                self.posts.extend(fyp_posts)
-                print(f"[scraper] For You feed: {len(fyp_posts)} posts")
             finally:
                 browser.close()
 
@@ -82,70 +91,15 @@ class XScraper:
 
     # ── private helpers ──
 
-    def _scrape_trending(self, page) -> list[str]:
-        """Return list of trending topic display-names."""
-        page.goto("https://x.com/explore/tabs/trending", wait_until="domcontentloaded", timeout=30000)
-        self._random_delay(2, 4)
+    def _search(self, page, keyword: str, sort: str = "top") -> list[dict]:
+        """Search X for a keyword, return parsed tweets."""
+        f_param = "top" if sort == "top" else "live"
+        search_url = f"https://x.com/search?q={quote(keyword)}&src=typed_query&f={f_param}"
 
-        # Scroll to load more trends
-        for _ in range(3):
-            page.evaluate("window.scrollBy(0, 800)")
-            time.sleep(1)
-
-        noise = {
-            "·", "trending", "trending worldwide", "only on x · trending",
-            "what's happening", "show more", "show less",
-        }
-
-        raw = []
-        # Try [data-testid="trend"] first
-        elements = page.query_selector_all('[data-testid="trend"]')
-        if elements:
-            for el in elements:
-                text = el.inner_text().strip()
-                if text:
-                    raw.append(text)
-        else:
-            # Fallback: grab all spans with dir="ltr"
-            for el in page.query_selector_all('div[dir="ltr"] span, span[dir="ltr"]'):
-                text = el.inner_text().strip()
-                if text and len(text) > 2:
-                    raw.append(text)
-
-        # Clean each raw trend text: extract just the topic name
-        topics = []
-        for text in raw:
-            lines = [l.strip() for l in text.split("\n") if l.strip()]
-            # Keep lines that are NOT metadata noise
-            clean = [
-                l for l in lines
-                if l.lower() not in noise
-                and not l.isdigit()
-                and not l.lower().startswith("trending")
-                and l not in ("·", "•")
-            ]
-            if clean:
-                # The topic is usually the longest remaining line
-                topic = max(clean, key=len)
-                topics.append(topic)
-
-        # Deduplicate preserving order
-        seen = set()
-        unique = []
-        for t in topics:
-            if t.lower() not in seen:
-                seen.add(t.lower())
-                unique.append(t)
-
-        return unique[:10]
-
-    def _scrape_topic_posts(self, page, topic: str) -> list[dict]:
-        """Search a trending topic and scrape its top tweets."""
-        search_url = f"https://x.com/search?q={quote(topic)}&src=trend_click&f=top"
         try:
             page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
         except PlaywrightTimeout:
-            print(f"[scraper] Timeout loading search for '{topic[:40]}'")
+            print(f"[scraper] Timeout loading search for '{keyword}'")
             return []
         self._random_delay(2, 3)
 
@@ -154,36 +108,19 @@ class XScraper:
             page.evaluate("window.scrollBy(0, 1000)")
             time.sleep(random.uniform(1, 2))
 
-        return self._extract_tweets(page, is_trending=True)
+        return self._extract_tweets(page, keyword=keyword, sort=sort)
 
-    def _scrape_for_you(self, page) -> list[dict]:
-        """Scrape the home timeline 'For You' feed."""
-        try:
-            page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=30000)
-        except PlaywrightTimeout:
-            print("[scraper] Timeout loading home timeline")
-            return []
-        self._random_delay(2, 3)
-
-        for _ in range(4):
-            page.evaluate("window.scrollBy(0, 1200)")
-            time.sleep(random.uniform(1, 2))
-
-        return self._extract_tweets(page, is_trending=False)
-
-    def _extract_tweets(self, page, is_trending: bool = False) -> list[dict]:
+    def _extract_tweets(self, page, keyword: str = "", sort: str = "top") -> list[dict]:
         """Parse visible tweet elements on the current page."""
         tweets = []
 
-        # Primary selector: X uses <article data-testid="tweet">
         articles = page.query_selector_all('article[data-testid="tweet"]')
         if not articles:
-            # Fallback: any <article>
             articles = page.query_selector_all("article")
 
-        for article in articles[:15]:
+        for article in articles[:10]:
             try:
-                data = self._parse_article(article, is_trending)
+                data = self._parse_article(article, keyword=keyword, sort=sort)
                 if data and data.get("text"):
                     tweets.append(data)
             except Exception as exc:
@@ -192,7 +129,7 @@ class XScraper:
 
         return tweets
 
-    def _parse_article(self, article, is_trending: bool) -> dict | None:
+    def _parse_article(self, article, keyword: str = "", sort: str = "top") -> dict | None:
         """Extract fields from a single <article> element."""
         # --- text ---
         text = ""
@@ -245,7 +182,8 @@ class XScraper:
             "retweets": retweets,
             "replies": replies,
             "timestamp": timestamp,
-            "is_trending": is_trending,
+            "keyword": keyword,
+            "sort": sort,
         }
 
     def _parse_metric(self, article, name: str) -> int:

@@ -56,7 +56,7 @@ def main():
     print("=" * 50)
     from datetime import datetime, timezone
 
-    subject = f"X Daily Digest — {datetime.now(tz=timezone.utc).strftime('%Y-%m-%d')}"
+    subject = f"X AI Dev Digest — {datetime.now(tz=timezone.utc).strftime('%Y-%m-%d')}"
     success = send_email(html, subject, args.to or "")
     if not success:
         print("[main] Email send FAILED — check credentials", file=sys.stderr)
