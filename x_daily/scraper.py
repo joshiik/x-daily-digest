@@ -92,26 +92,42 @@ class XScraper:
             page.evaluate("window.scrollBy(0, 800)")
             time.sleep(1)
 
-        topics = []
-        for selector in [
-            '[data-testid="trend"]',
-            'div[dir="ltr"] span',
-        ]:
-            try:
-                for el in page.query_selector_all(selector):
-                    text = el.inner_text().strip()
-                    if text and len(text) > 2 and not text.startswith("·"):
-                        topics.append(text)
-            except Exception:
-                continue
-            if len(topics) >= 8:
-                break
+        noise = {
+            "·", "trending", "trending worldwide", "only on x · trending",
+            "what's happening", "show more", "show less",
+        }
 
-        # Filter out noise: short strings, numbers-only, "Trending" labels
-        topics = [
-            t for t in topics
-            if len(t) > 2 and not t.isdigit() and t.lower() not in ("trending", "what's happening")
-        ]
+        raw = []
+        # Try [data-testid="trend"] first
+        elements = page.query_selector_all('[data-testid="trend"]')
+        if elements:
+            for el in elements:
+                text = el.inner_text().strip()
+                if text:
+                    raw.append(text)
+        else:
+            # Fallback: grab all spans with dir="ltr"
+            for el in page.query_selector_all('div[dir="ltr"] span, span[dir="ltr"]'):
+                text = el.inner_text().strip()
+                if text and len(text) > 2:
+                    raw.append(text)
+
+        # Clean each raw trend text: extract just the topic name
+        topics = []
+        for text in raw:
+            lines = [l.strip() for l in text.split("\n") if l.strip()]
+            # Keep lines that are NOT metadata noise
+            clean = [
+                l for l in lines
+                if l.lower() not in noise
+                and not l.isdigit()
+                and not l.lower().startswith("trending")
+                and l not in ("·", "•")
+            ]
+            if clean:
+                # The topic is usually the longest remaining line
+                topic = max(clean, key=len)
+                topics.append(topic)
 
         # Deduplicate preserving order
         seen = set()
