@@ -1,0 +1,45 @@
+name: X Daily Digest
+
+on:
+  schedule:
+    # 8:00 AM China Standard Time (UTC+8) = 00:00 UTC
+    - cron: "0 0 * * *"
+  workflow_dispatch: # manual trigger from Actions tab
+
+jobs:
+  scrape-and-email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browser
+        run: playwright install chromium --with-deps
+
+      - name: Decode X auth state
+        env:
+          X_AUTH_STATE_B64: ${{ secrets.X_AUTH_STATE_B64 }}
+        run: |
+          if [ -n "$X_AUTH_STATE_B64" ]; then
+            echo "$X_AUTH_STATE_B64" | base64 -d > auth.json
+            echo "auth.json created ($(wc -c < auth.json) bytes)"
+          else
+            echo "WARNING: X_AUTH_STATE_B64 not set — scraping without auth"
+          fi
+
+      - name: Run daily digest
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          X_AUTH_STATE_PATH: auth.json
+        run: python -m x_daily.main

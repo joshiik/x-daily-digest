@@ -1,0 +1,7 @@
+auth.json
+auth.json.b64
+__pycache__/
+*.pyc
+.env
+done.txt
+test_proxy.py
